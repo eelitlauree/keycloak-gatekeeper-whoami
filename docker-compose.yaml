@@ -1,0 +1,77 @@
+version: "3.3"
+
+services:
+  traefik:
+    image: "traefik:${TAEFIK_VERSION-v2.2}"
+    command:
+      #- "--log.level=DEBUG"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"
+      - "8080:8080"
+    networks:
+      - transit_idp
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+
+  keycloak-gatekeeper:
+    depends_on:
+      - keycloak
+      - whoami 
+    image: keycloak/keycloak-gatekeeper:${KEYCLOAK_GATEKEEPER_VERSION-7.0.0}
+    labels:
+      - "traefik.enable=true"
+      - traefik.port=3000
+      - "traefik.http.routers.whoami.rule=Host(`whoami.localhost`)"
+      - "traefik.http.routers.whoami.entrypoints=web"
+    links:
+      - "traefik:auth.localhost"  
+    ports:
+      - 3000
+    networks:
+      - transit_idp
+    volumes:
+      - ./keycloak-gatekeeper-whoami.conf:/etc/keycloak-gatekeeper.conf
+    entrypoint:
+      - /opt/keycloak-gatekeeper
+      - --config=/etc/keycloak-gatekeeper.conf
+
+  whoami:
+    image: "containous/whoami"
+    labels:
+      - "traefik.enable=false"
+    networks:
+      - transit_idp
+
+  keycloak:
+    image: jboss/keycloak:${KEYCLOAK_VERSION-9.0.2}
+    hostname: keycloak
+    depends_on:
+      - traefik 
+    environment:
+      - DB_VENDOR=H2
+      - PROXY_ADDRESS_FORWARDING=true
+      - KEYCLOAK_LOGLEVEL=INFO
+      - KEYCLOAK_USER=admin
+      - KEYCLOAK_PASSWORD=test
+    volumes:
+      - ./export-all.json:/opt/jboss/export-all.json
+    networks:
+      transit_idp:
+    labels:
+      - traefik.port=8443
+      - "traefik.enable=true"
+      - "traefik.http.routers.auth.rule=Host(`auth.localhost`)"
+      - "traefik.http.routers.auth.entrypoints=web"
+    command: ["-b", 
+              "0.0.0.0", 
+              "-Dkeycloak.profile.feature.docker=enabled", 
+              "-Dkeycloak.migration.action=import",
+              "-Dkeycloak.migration.provider=singleFile",
+              "-Dkeycloak.migration.file=/opt/jboss/export-all.json"]
+
+networks:
+  transit_idp:
